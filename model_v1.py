@@ -10,7 +10,7 @@ class Model():
     self.neg = tf.placeholder(tf.int32, shape=(None, args.maxlen))
     pos = self.pos
     neg = self.neg
-    mask = tf.expand_dims(tf.to_float(tf.not_equal(self.input_seq, 0)), -1)
+    mask = tf.expand_dims(tf.to_float(tf.not_equal(self.input_seq, 0)), -1) # mask padding positions
 
     with tf.variable_scope("SASRec", reuse=reuse):
       # sequence embedding, item embedding table
@@ -87,7 +87,7 @@ class Model():
                            num_heads=args.num_heads,
                            dropout_rate=args.dropout_rate,
                            is_training=self.is_training,
-                           causality=True,
+                           causality=not args.bidi_attn,
                            scope="self_attention")
           self.attention.append(attention)
           # Feed forward

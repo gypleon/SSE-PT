@@ -21,6 +21,7 @@ def sample_function(user_train, usernum, itemnum, batch_size, maxlen,
     user = np.random.randint(1, usernum + 1)
     while len(user_train[user]) <= 1: user = np.random.randint(1, usernum + 1)
 
+    # NOTE: 0 as heading padding
     seq = np.zeros([maxlen], dtype=np.int32) # perturbed item seq
     pos = np.zeros([maxlen], dtype=np.int32) # perturbed positive labels (the next item for autoregression)
     neg = np.zeros([maxlen], dtype=np.int32) # random negative labels

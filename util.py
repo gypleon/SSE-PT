@@ -5,7 +5,39 @@ import numpy as np
 from collections import defaultdict
 
 
-def data_partition_ust(fname, min_len_for_eval):
+def data_partition(fname):
+  usernum = 0
+  itemnum = 0
+  User = defaultdict(list)
+  user_train = {}
+  user_valid = {}
+  user_test = {}
+  # assume user/item index starting from 1
+  f = open('data/%s.txt' % fname, 'r')
+  for line in f:
+    u, i = line.rstrip().split(' ')
+    u = int(u)
+    i = int(i)
+    usernum = max(u, usernum)
+    itemnum = max(i, itemnum)
+    User[u].append(i)
+
+  for user in User:
+    nfeedback = len(User[user])
+    if nfeedback < 3:
+      user_train[user] = User[user]
+      user_valid[user] = []
+      user_test[user] = []
+    else:
+      user_train[user] = User[user][:-2]
+      user_valid[user] = []
+      user_valid[user].append(User[user][-2])
+      user_test[user] = []
+      user_test[user].append(User[user][-1])
+  return [user_train, user_valid, user_test, usernum, itemnum]
+
+
+def data_partition_ust(fname, min_len_for_eval, with_test=False):
   '''leon: adapt to ust's data format, remove test set
   '''
   # NOTE: usernum/itemnum might be sparse? NO
@@ -14,6 +46,7 @@ def data_partition_ust(fname, min_len_for_eval):
   User = {}
   user_train = {}
   user_valid = {}
+  if with_test: user_test = {}
   with open('data/%s.txt' % fname, 'r') as inf:
     for line in inf:
       uid, iids = line.rstrip().split(':')
@@ -29,10 +62,20 @@ def data_partition_ust(fname, min_len_for_eval):
     if nfeedback < min_len_for_eval: # NOTE: to keep enough training data
       user_train[uid] = items
       user_valid[uid] = []
+      if with_test: user_test[uid] = []
     else:
-      user_train[uid] = items[:-1]
-      user_valid[uid] = [items[-1]]
-  return [user_train, user_valid, usernum, itemnum]
+      if with_test:
+        user_train[uid] = items[:-2]
+        user_valid[uid] = [items[-2]]
+        user_test[uid] = [items[-1]]
+      else:
+        user_train[uid] = items[:-1]
+        user_valid[uid] = [items[-1]]
+
+  if with_test:
+    return [user_train, user_valid, user_test, usernum, itemnum]
+  else:
+    return [user_train, user_valid, usernum, itemnum]
 
 
 def prepare_test_data(path):
@@ -52,21 +95,21 @@ def prepare_test_data(path):
 
 
 def evaluate(model, dataset, args, sess):
-  '''final testing
-  '''
-  [train, valid, usernum, itemnum] = copy.deepcopy(dataset)
+  [train, valid, test, usernum, itemnum] = copy.deepcopy(dataset)
 
   NDCG = 0.0
+  NDCG1 = 0.0
   HT = 0.0
+  HT1 = 0.0
   valid_user = 0.0
 
-  if usernum > 10000: # TODO: configurable
+  if usernum>10000:
     users = random.sample(range(1, usernum + 1), 10000)
   else:
     users = range(1, usernum + 1)
   for u in users:
 
-    if len(train[u]) < 1 or len(valid[u]) < 1: continue # TODO: set dataset
+    if len(train[u]) < 1 or len(test[u]) < 1: continue
 
     seq = np.zeros([args.maxlen], dtype=np.int32)
     idx = args.maxlen - 1
@@ -78,15 +121,15 @@ def evaluate(model, dataset, args, sess):
       if idx == -1: break
     rated = set(train[u])
     rated.add(0)
-    item_idx = [valid[u][0]] # TODO: set dataset
-    for _ in range(100):
+    item_idx = [test[u][0]]
+    for _ in range(args.num_cands-1):
       t = np.random.randint(1, itemnum + 1)
       while t in rated: t = np.random.randint(1, itemnum + 1)
       item_idx.append(t)
 
     predictions = -model.predict(sess, [u], [seq], item_idx)
     predictions = predictions[0]
-    #print(predictions)
+
     rank = predictions.argsort().argsort()[0]
 
     valid_user += 1
@@ -94,11 +137,14 @@ def evaluate(model, dataset, args, sess):
     if rank < args.k:
       NDCG += 1 / np.log2(rank + 2)
       HT += 1
+    if rank < args.k1:
+      NDCG1 += 1 / np.log2(rank + 2)
+      HT1 += 1
     if valid_user % 1000 == 0:
-      #print '.',
+      print("[eval] {}/{}".format(int(valid_user), len(users)))
       sys.stdout.flush()
 
-  return NDCG / valid_user, HT / valid_user
+  return NDCG / valid_user, NDCG1 / valid_user, HT / valid_user, HT1 / valid_user
 
 
 def predict(model, dataset, args, sess, outpath):
@@ -133,15 +179,17 @@ def predict(model, dataset, args, sess, outpath):
 
 def evaluate_valid(model, dataset, args, sess):
   print("[eval] started")
-  [train, valid, usernum, itemnum] = copy.deepcopy(dataset)
+  if args.std_test:
+    [train, valid, test, usernum, itemnum] = copy.deepcopy(dataset)
+  else:
+    [train, valid, usernum, itemnum] = copy.deepcopy(dataset)
 
   # NDCG = 0.0
   valid_user = 0.0
   HT = 0.0
   HT1 = 0.0
-  max_users_to_eval = 10000 # TODO: configurable
-  if usernum > max_users_to_eval:
-    users = random.sample(range(1, usernum + 1), max_users_to_eval)
+  if usernum > args.max_users_to_eval:
+    users = random.sample(range(1, usernum + 1), args.max_users_to_eval)
   else:
     users = range(1, usernum + 1)
   for u in users:
@@ -173,7 +221,7 @@ def evaluate_valid(model, dataset, args, sess):
         item_idx.append(t) # add random candidate items which have yet appeared for this user
       '''
       item_cands -= rated
-      item_idx.extend(random.sample(item_cands, args.num_cands))
+      item_idx.extend(random.sample(item_cands, args.num_cands-1))
 
     predictions = -model.predict(sess, [u], [seq], item_idx) # `-`: max -> min
     predictions = predictions[0] # [args.num_cands]

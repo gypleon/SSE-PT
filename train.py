@@ -1,5 +1,5 @@
 '''
-modified from
+inherit from
 https://github.com/wuliwei9278/SSE-PT
 leon
 '''
@@ -25,7 +25,7 @@ def str2bool(s):
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', default='train_data')
-parser.add_argument('--train_dir', default='./model')
+parser.add_argument('--train_dir', default='./models/test')
 parser.add_argument('--batch_size', default=128, type=int)
 parser.add_argument('--lr', default=0.001, type=float)
 parser.add_argument('--maxlen', default=100, type=int)
@@ -47,8 +47,21 @@ parser.add_argument('--num_cands', default=100, type=int, help="`-1` to include 
 parser.add_argument('--early_stop_epochs', default=50, type=int)
 parser.add_argument('--min_len_for_eval', default=5, type=int)
 parser.add_argument('--best_res_log', default='best_result')
+parser.add_argument('--max_users_to_eval', default=100000, type=int)
+
+parser.add_argument('--fast_infer', action="store_true", help="faster infer computation")
+parser.add_argument('--std_test', action="store_true", help="train & test over std tasks")
+parser.add_argument('--with_test', action="store_true", help="prepare test set")
+parser.add_argument('--bidi_attn', action="store_true", help="bidirectional attn")
+parser.add_argument('--start_delay', default=0, type=int, help="start training after n seconds")
 
 args = parser.parse_args()
+
+for i in range(args.start_delay, 0, -1):
+  time.sleep(1)
+  if i % 1800 == 0:
+    print("{} seconds to start training".format(i))
+    sys.stdout.flush()
 
 if not os.path.isdir(args.train_dir):
   os.makedirs(args.train_dir)
@@ -60,10 +73,12 @@ with open(os.path.join(args.train_dir, 'args.txt'), 'w') as f:
 
 os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
 
-# dataset = data_partition(args.dataset)
-# [user_train, user_valid, user_test, usernum, itemnum] = dataset
-dataset = data_partition_ust(args.dataset, args.min_len_for_eval)
-[user_train, user_valid, usernum, itemnum] = dataset
+if args.std_test:
+  dataset = data_partition_ust(args.dataset, args.min_len_for_eval, args.with_test)
+  [user_train, user_valid, user_test, usernum, itemnum] = dataset
+else:
+  dataset = data_partition_ust(args.dataset, args.min_len_for_eval)
+  [user_train, user_valid, usernum, itemnum] = dataset
 
 num_batch = len(user_train) // args.batch_size
 cc = 0.0
@@ -108,10 +123,14 @@ with tf.Session(config=config) as sess:
     print("[saved] {}".format(save_path))
 
   T = 0.0
-  # t_test = evaluate(model, dataset, args, sess)
-  # t_valid = evaluate_valid(model, dataset, args, sess)
-  # print("[0, 0.0, {0}, {1}, {2}, {3}],".format(t_valid[0], t_valid[1], t_test[0], t_test[1]))
-  # print("[0, 0.0, HR@{} = {}, HR@{} = {}],".format(args.k, t_valid[0], args.k1, t_valid[1]))
+  t0 = time.time()
+  t_valid = evaluate_valid(model, dataset, args, sess)
+  print("[init] time = {}, best = {}, eval HR@{} = {}, HR@{} = {}],".format(time.time() - t0, best_result, args.k, t_valid[0], args.k1, t_valid[1]))
+  if args.std_test:
+    t0 = time.time()
+    t_test = evaluate(model, dataset, args, sess)
+    print("[init] time = {}, test NDCG{} = {}, NDCG{} = {}, HR{} = {}, HR{} = {}]".format(time.time() - t0, args.k,
+      t_test[0], args.k1, t_test[1], args.k, t_test[2], args.k1, t_test[3]))
 
   t0 = time.time()
 
@@ -156,6 +175,11 @@ with tf.Session(config=config) as sess:
           print("[stop training] no improvement for {} epochs".format(no_improve))
           break
       sys.stdout.flush()
+
+  if args.std_test:
+    t_test = evaluate(model, dataset, args, sess)
+    print("[final] time = {}, test NDCG{} = {}, NDCG{} = {}, HR{} = {}, HR{} = {}]".format(time.time() - t0, args.k,
+      t_test[0], args.k1, t_test[1], args.k, t_test[2], args.k1, t_test[3]))
 
 # f.close()
 sampler.close()
