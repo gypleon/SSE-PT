@@ -1,7 +1,9 @@
 '''
 inherit from
 https://github.com/wuliwei9278/SSE-PT
-leon
+leon updated:
+  1. early stopping, training/inference efficiency
+  2. 
 '''
 
 import sys
