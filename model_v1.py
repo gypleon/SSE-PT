@@ -135,13 +135,15 @@ class Model():
     test_item_emb = tf.reshape(tf.concat([test_item_emb, test_user_emb], 1), [-1, self.hidden_units]) # [num_cands, H]
 
     if args.fast_infer:
-      self.test_logits = tf.matmul(seq_emb[-1:, :], tf.transpose(test_item_emb)) # [B, num_cands], B = 1
+      seq_emb_3d = tf.reshape(seq_emb, [tf.shape(self.input_seq)[0], args.maxlen, self.hidden_units])
+      self.test_logits = tf.matmul(seq_emb_3d[:, -1, :], tf.transpose(test_item_emb)) # [B, num_cands]
     else: # leon: NOTE: no need to calculate over the whole length
       self.test_logits = tf.matmul(seq_emb, tf.transpose(test_item_emb)) # [B * T, num_cands], B = 1 
       self.test_logits = tf.reshape(self.test_logits, [tf.shape(self.input_seq)[0], args.maxlen, num_cands]) # [B, T, num_cands]
       self.test_logits = self.test_logits[:, -1, :]
 
-    self.probs = tf.nn.softmax(self.test_logits) # [B, num_cands]
+    if len(args.expert_paths.split(',')) > 1:
+      self.probs = tf.nn.softmax(self.test_logits) # [B, num_cands]
 
     # prediction layer
     self.pos_logits = tf.reduce_sum(pos_emb * seq_emb, -1) # [B * T, H] -> [B * T], NOTE: similar to cos-sim
@@ -176,7 +178,8 @@ class Model():
             {self.u: u, self.input_seq: seq, self.test_item: item_idx, self.is_training: False})
 
   def get_probs(self):
-    return self.probs
+    if len(args.expert_paths.split(',')) > 1: return self.probs
+    else: return None
 
 
 class Coordinator():
@@ -184,7 +187,7 @@ class Coordinator():
     self.is_training = tf.placeholder(tf.bool, shape=())
     self.u = tf.placeholder(tf.int32, shape=(None))
     self.input_seq = tf.placeholder(tf.int32, shape=(None, args.maxlen))
-    self.pos = tf.placeholder(tf.int32, shape=(None, args.maxlen))
+    self.pos = tf.placeholder(tf.int32, shape=(None, args.maxlen)) # iid labels
     # self.test_item = tf.placeholder(tf.int32, shape=(itemnum))
 
     mask = tf.expand_dims(tf.to_float(tf.not_equal(self.input_seq, 0)), -1) # mask padding positions
@@ -199,12 +202,7 @@ class Coordinator():
             is_training = tf.constant(False), 
             u = self.u, input_seq = self.input_seq, test_item = tf.range(1, itemnum+1, dtype=tf.int32),
             )
-        # TODO: check this input manner
-        # TODO: decode `batch_size` times
-        # expert.is_training = tf.constant(False)
-        # expert.u = self.u
-        # expert.input_seq = self.input_seq
-        # expert.test_item = tf.range(1, itemnum+1, dtype=tf.int32)
+        # TODO: parallelly decode w/ `batch_size`
         outputs.append(expert.get_probs())
 
         # outputs.append(tf.get_variable("test", shape=[128, itemnum]))
@@ -217,8 +215,8 @@ class Coordinator():
             initializer=tf.truncated_normal_initializer(stddev=0.02))
         expert_bias = tf.get_variable("ex_bias_{}".format(i), shape=[itemnum], initializer=tf.zeros_initializer())
         outputs[i] = outputs[i] * expert_weights + expert_bias
-      output = tf.stack(outputs, axis=-1)
-      self.logits = tf.reduce_sum(output, axis=-1)/2 # [B, I]
+      output = tf.stack(outputs, axis=-1) # [B, I, E]
+      self.logits = tf.reduce_mean(output, axis=-1) # [B, I]
       self.predictions = tf.nn.softmax(self.logits) # [B, I]
 
     one_hot_labels = tf.one_hot(self.pos[:, -1] - 1, depth=itemnum, dtype=tf.float32) # [B, I], `pos-1` maps iid to vocab

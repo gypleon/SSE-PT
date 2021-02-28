@@ -4,6 +4,8 @@ import random
 import numpy as np
 from collections import defaultdict
 
+import tensorflow as tf
+
 
 def data_partition(fname):
   usernum = 0
@@ -81,14 +83,14 @@ def data_partition_ust(fname, min_len_for_eval, with_test=False):
 def prepare_test_data(path):
   '''leon: prepare testing data
   '''
-  user_test = {}
+  user_test = []
   with open(path, 'r') as inf:
     for line in inf:
       uid, iids = line.rstrip().split(':')
       uid = int(uid)
       iids = iids.split(',')
       iids = [int(iid) for iid in iids]
-      user_test[uid] = iids
+      user_test.append([uid, iids])
 
   print("[prepare_test_data] loaded {} users from {}".format(len(user_test), path))
   return user_test
@@ -151,28 +153,44 @@ def predict(model, dataset, args, sess, outpath):
   print("[pred] started")
   users = copy.deepcopy(dataset)
   itemnum = args.itemnum
+  bs = args.batch_size
 
   with open(outpath, 'w') as outf:
-    for num_tested, (uid, items) in enumerate(users.items()):
-      seq = np.zeros([args.maxlen], dtype=np.int32)
-      idx = args.maxlen - 1
-      for i in reversed(items): # based on the last `maxlen` items
-        seq[idx] = i
-        idx -= 1
-        if idx == -1: break
+    if bs > 1: # TODO: batch-wise decoding
+      num_tested = 0
+      num_batch = len(users) // bs 
+      num_last_batch = len(users) - num_batch * bs
+      for b_i in range(num_batch):
+        users_b = users[b_i*bs: (b_i+1)*bs]
+        seq = np.zeros([bs, args.maxlen], dtype=np.int32)
+        for b_in_i, uid, items in enumerate(users_b):
+          idx = args.maxlen - 1
+          for i in reversed(items): # based on the last `maxlen` items
+            # TODO
+            seq[b_in_i][idx] = i
+            idx -= 1
+            if idx == -1: break
+    else:
+      for num_tested, (uid, items) in enumerate(users):
+        seq = np.zeros([args.maxlen], dtype=np.int32)
+        idx = args.maxlen - 1
+        for i in reversed(items): # based on the last `maxlen` items
+          seq[idx] = i
+          idx -= 1
+          if idx == -1: break
 
-      item_idx = [i for i in range(1, itemnum + 1)]
+        item_idx = [i for i in range(1, itemnum + 1)]
 
-      predictions = -model.predict(sess, [uid], [seq], item_idx) # smaller -> more likely
-      predictions = predictions[0] # [itemnum] NOTE: items-indices = [1, itemnum]-[0, itemnum-1]
+        predictions = -model.predict(sess, [uid], [seq], item_idx) # smaller -> more likely
+        predictions = predictions[0] # [itemnum] NOTE: items-indices = [1, itemnum]-[0, itemnum-1]
 
-      top_items = predictions.argsort()[:args.k1] + 1 # top-k indices. `+1` map vocab to iid
+        top_items = predictions.argsort()[:args.k1] + 1 # top-k indices. `+1` map vocab to iid
 
-      outf.write("{}\n".format(top_items.tolist()))
+        outf.write("{}\n".format(top_items.tolist()))
 
-      if num_tested % 100 == 0:
-        print("[pred] {}/{}".format(num_tested+1, len(users)))
-        sys.stdout.flush()
+        if num_tested % 100 == 0:
+          print("[pred] {}/{}".format(num_tested+1, len(users)))
+          sys.stdout.flush()
 
   return num_tested+1
 
@@ -247,3 +265,28 @@ def evaluate_valid(model, dataset, args, sess):
   sys.stdout.flush()
 
   return HT / valid_user, HT1 / valid_user
+
+
+def restore_collection(path, scope, sess, graph):
+  '''
+  args:
+    path: checkpoint file
+  '''
+  with graph.as_default():
+    print("[restoring experts' params]")
+    # variables = {v.name: v for v in tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope)}
+    variables = {v.name: v for v in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope)}
+    # print("[graph variables]")
+    # for vname in variables:
+    #   print("  {}".format(vname))
+    #   sys.stdout.flush()
+    for var_name, _ in tf.contrib.framework.list_variables(path):
+      if "Adam" in var_name or "beta1_power" in var_name or "beta2_power" in var_name or "global_step" in var_name: continue
+      var_value = tf.contrib.framework.load_variable(path, var_name)
+      target_var_name = '%s/%s:0' % (scope, var_name)
+      target_variable = variables[target_var_name]
+      sess.run(target_variable.assign(var_value))
+      print("  {} -> {}".format(var_name, target_var_name))
+      sys.stdout.flush()
+
+

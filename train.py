@@ -132,29 +132,6 @@ def create_model(usernum, itemnum, args):
   return graph, model, num_experts, model_paths, global_step, saver
 
 
-def restore_collection(path, scope, sess, graph):
-  '''
-  args:
-    path: checkpoint file
-  '''
-  with graph.as_default():
-    print("[restoring experts' params]")
-    # variables = {v.name: v for v in tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope)}
-    variables = {v.name: v for v in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope)}
-    # print("[graph variables]")
-    # for vname in variables:
-    #   print("  {}".format(vname))
-    #   sys.stdout.flush()
-    for var_name, _ in tf.contrib.framework.list_variables(path):
-      if "Adam" in var_name or "beta1_power" in var_name or "beta2_power" in var_name or "global_step" in var_name: continue
-      var_value = tf.contrib.framework.load_variable(path, var_name)
-      target_var_name = '%s/%s:0' % (scope, var_name)
-      target_variable = variables[target_var_name]
-      sess.run(target_variable.assign(var_value))
-      print("  {} -> {}".format(var_name, target_var_name))
-      sys.stdout.flush()
-
-
 def main():
 
   prepare_env()
@@ -215,7 +192,7 @@ def main():
       for step in range(num_batch):
         u, seq, pos, neg = sampler.next_batch()
         if num_experts > 1:
-          log_freq = 1000
+          log_freq = 100
           loss, _, global_step_val = sess.run(
               [model.loss, model.train_op, global_step],
               {model.u: u, model.input_seq: seq, model.pos: pos, model.is_training: True})
