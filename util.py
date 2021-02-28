@@ -160,16 +160,55 @@ def predict(model, dataset, args, sess, outpath):
       num_tested = 0
       num_batch = len(users) // bs 
       num_last_batch = len(users) - num_batch * bs
+
       for b_i in range(num_batch):
         users_b = users[b_i*bs: (b_i+1)*bs]
-        seq = np.zeros([bs, args.maxlen], dtype=np.int32)
-        for b_in_i, uid, items in enumerate(users_b):
+        seq_b = np.zeros([bs, args.maxlen], dtype=np.int32)
+        uid_b = np.zeros([bs], dtype=np.int32)
+        for b_in_i, (uid, items) in enumerate(users_b):
+          uid_b[b_in_i] = uid
           idx = args.maxlen - 1
           for i in reversed(items): # based on the last `maxlen` items
-            # TODO
-            seq[b_in_i][idx] = i
+            seq_b[b_in_i][idx] = i
             idx -= 1
             if idx == -1: break
+
+        item_idx = [i for i in range(1, itemnum + 1)]
+
+        predictions = -model.predict(sess, uid_b, seq_b, item_idx) # smaller -> more likely, batch-wise # [itemnum] NOTE: items-indices = [1, itemnum]-[0, itemnum-1]
+
+        top_items = predictions.argsort(axis=-1)[:, :args.k1] + 1 # top-k indices. `+1` map vocab to iid, [B, k1]
+        for b_in_i in range(bs):
+          outf.write("{}\n".format(top_items[b_in_i].tolist()))
+          num_tested += 1
+          if num_tested % 100 == 0:
+            print("[pred] {}/{}".format(num_tested+1, len(users)))
+            sys.stdout.flush()
+
+      if num_last_batch > 0:
+        users_b = users[-num_last_batch:]
+        seq_b = np.zeros([num_last_batch, args.maxlen], dtype=np.int32)
+        uid_b = np.zeros([num_last_batch], dtype=np.int32)
+        for b_in_i, (uid, items) in enumerate(users_b):
+          uid_b[b_in_i] = uid
+          idx = args.maxlen - 1
+          for i in reversed(items): # based on the last `maxlen` items
+            seq_b[b_in_i][idx] = i
+            idx -= 1
+            if idx == -1: break
+
+        item_idx = [i for i in range(1, itemnum + 1)]
+
+        predictions = -model.predict(sess, uid_b, seq_b, item_idx) # smaller -> more likely, batch-wise # [itemnum] NOTE: items-indices = [1, itemnum]-[0, itemnum-1]
+
+        top_items = predictions.argsort(axis=-1)[:, :args.k1] + 1 # top-k indices. `+1` map vocab to iid, [B, k1]
+        for b_in_i in range(num_last_batch):
+          outf.write("{}\n".format(top_items[b_in_i].tolist()))
+          num_tested += 1
+          if num_tested % 100 == 0:
+            print("[pred] {}/{}".format(num_tested+1, len(users)))
+            sys.stdout.flush()
+
     else:
       for num_tested, (uid, items) in enumerate(users):
         seq = np.zeros([args.maxlen], dtype=np.int32)

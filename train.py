@@ -2,9 +2,9 @@
 modified from https://github.com/wuliwei9278/SSE-PT
 leon updated:
   1. early stopping, training efficiency, code style
-  2. impl inference.py
+  2. impl inference.py, high-efficient parallel generation
   3. mixture of experts
-  4. improve negative sampling / data augmentation (simulate test setting)
+  4. improve negative sampling / data augmentation
 '''
 
 import sys
