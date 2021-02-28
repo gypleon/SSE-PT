@@ -2,19 +2,21 @@ from modules import *
 
 
 class Model():
-  def __init__(self, usernum, itemnum, args, reuse=tf.AUTO_REUSE):
+  def __init__(self, usernum, itemnum, args, reuse=tf.AUTO_REUSE,
+      is_training = None, u = None, input_seq = None, test_item = None,
+      ):
     if args.num_cands < 0:
       num_cands = itemnum
     else:
       num_cands = args.num_cands
 
     if len(args.expert_paths.split(',')) > 1:
-      self.is_training = tf.constant(False)
-      self.u = tf.zeros([args.batch_size], dtype=tf.int32)
-      self.input_seq = tf.zeros([args.batch_size, args.maxlen], dtype=tf.int32)
+      self.is_training = is_training
+      self.u = u
+      self.input_seq = input_seq
       self.pos = tf.zeros([args.batch_size, args.maxlen], dtype=tf.int32)
       self.neg = tf.zeros([args.batch_size, args.maxlen], dtype=tf.int32)
-      self.test_item = tf.zeros([num_cands], dtype=tf.int32)
+      self.test_item = test_item
     else:
       self.is_training = tf.placeholder(tf.bool, shape=())
       self.u = tf.placeholder(tf.int32, shape=(None))
@@ -142,7 +144,7 @@ class Model():
     self.probs = tf.nn.softmax(self.test_logits) # [B, num_cands]
 
     # prediction layer
-    self.pos_logits = tf.reduce_sum(pos_emb * seq_emb, -1) # [B * T, H] -> [B * T]
+    self.pos_logits = tf.reduce_sum(pos_emb * seq_emb, -1) # [B * T, H] -> [B * T], NOTE: similar to cos-sim
     self.neg_logits = tf.reduce_sum(neg_emb * seq_emb, -1)
 
     # ignore padding items (0)
@@ -193,24 +195,30 @@ class Coordinator():
     for i in range(num_experts):
       print("[coord] building expert_{}".format(i))
       with tf.variable_scope("expert_{}".format(i), reuse=reuse):
-        expert = Model(usernum, itemnum, args)
+        expert = Model(usernum, itemnum, args,
+            is_training = tf.constant(False), 
+            u = self.u, input_seq = self.input_seq, test_item = tf.range(1, itemnum+1, dtype=tf.int32),
+            )
         # TODO: check this input manner
         # TODO: decode `batch_size` times
-        expert.is_training = tf.constant(False)
-        expert.u = self.u
-        expert.input_seq = self.input_seq
-        expert.test_item = tf.range(1, itemnum+1, dtype=tf.int32)
+        # expert.is_training = tf.constant(False)
+        # expert.u = self.u
+        # expert.input_seq = self.input_seq
+        # expert.test_item = tf.range(1, itemnum+1, dtype=tf.int32)
         outputs.append(expert.get_probs())
 
         # outputs.append(tf.get_variable("test", shape=[128, itemnum]))
-    output = tf.stack(outputs, axis=1) # [B, E, I]
-    output = tf.transpose(output, [0, 2, 1])
+    # output = tf.stack(outputs, axis=-1) # [B, I, E]
 
     with tf.variable_scope("coordinator"):
-      self.logits = tf.layers.dense(output, 1, kernel_initializer=None) # [B, 1, I]
-      # self.logits = feedforward(normalize(output), num_units=[batch_size, 1, itemnum],
-      #              dropout_rate=args.dropout_rate, is_training=self.is_training)
-      self.logits = tf.reshape(self.logits, [batch_size, itemnum])
+      # self.logits = tf.layers.dense(output, 1, kernel_initializer=tf.truncated_normal_initializer(stddev=0.02)) # [B, 1, I]
+      for i in range(num_experts):
+        expert_weights = tf.get_variable("ex_weights_{}".format(i), shape=[itemnum],
+            initializer=tf.truncated_normal_initializer(stddev=0.02))
+        expert_bias = tf.get_variable("ex_bias_{}".format(i), shape=[itemnum], initializer=tf.zeros_initializer())
+        outputs[i] = outputs[i] * expert_weights + expert_bias
+      output = tf.stack(outputs, axis=-1)
+      self.logits = tf.reduce_sum(output, axis=-1)/2 # [B, I]
       self.predictions = tf.nn.softmax(self.logits) # [B, I]
 
     one_hot_labels = tf.one_hot(self.pos[:, -1] - 1, depth=itemnum, dtype=tf.float32) # [B, I], `pos-1` maps iid to vocab

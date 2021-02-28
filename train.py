@@ -24,15 +24,15 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', default='train_data')
 parser.add_argument('--train_dir', default='./models/test')
 parser.add_argument('--batch_size', default=128, type=int)
-parser.add_argument('--lr', default=0.001, type=float)
-parser.add_argument('--maxlen', default=100, type=int)
+parser.add_argument('--lr', default=0.0005, type=float)
+parser.add_argument('--maxlen', default=256, type=int)
 parser.add_argument('--user_hidden_units', default=64, type=int)
-parser.add_argument('--item_hidden_units', default=64, type=int)
+parser.add_argument('--item_hidden_units', default=128, type=int)
 parser.add_argument('--num_blocks', default=2, type=int)
 parser.add_argument('--num_epochs', default=2001, type=int)
 parser.add_argument('--num_heads', default=4, type=int)
 parser.add_argument('--dropout_rate', default=0.5, type=float)
-parser.add_argument('--threshold_user', default=0.9, type=float)
+parser.add_argument('--threshold_user', default=0.5, type=float)
 parser.add_argument('--threshold_item', default=0.9, type=float)
 parser.add_argument('--l2_emb', default=0.0, type=float)
 parser.add_argument('--gpu', default=0, type=int)
@@ -258,9 +258,13 @@ def main():
         else:
           print("[best_result] {} (step-{}) > {} (step-{})".format(best_result, best_step, t_valid[args.eval_tgt_idx], global_step_val))
           no_improve += args.eval_freq
-          if no_improve >= args.early_stop_epochs:
-            print("[stop training] no improvement for {} epochs".format(no_improve))
-            break
+          if args.early_stop_epochs < 0: # turn off early stopping
+            save_path = saver.save(sess, os.path.join(args.train_dir, "model.ckpt"), global_step_val)
+            print("[saved] {}".format(save_path))
+          else:
+            if no_improve >= args.early_stop_epochs:
+              print("[stop training] no improvement for {} epochs".format(no_improve))
+              break
         sys.stdout.flush()
 
     if args.std_test:
