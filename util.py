@@ -166,7 +166,7 @@ def predict(model, dataset, args, sess, outpath):
       predictions = -model.predict(sess, [uid], [seq], item_idx) # smaller -> more likely
       predictions = predictions[0] # [itemnum] NOTE: items-indices = [1, itemnum]-[0, itemnum-1]
 
-      top_items = predictions.argsort()[:args.k1] + 1 # top-k indices. `+1` correct index offset
+      top_items = predictions.argsort()[:args.k1] + 1 # top-k indices. `+1` map vocab to iid
 
       outf.write("{}\n".format(top_items.tolist()))
 
@@ -226,7 +226,10 @@ def evaluate_valid(model, dataset, args, sess):
     predictions = -model.predict(sess, [u], [seq], item_idx) # `-`: max -> min
     predictions = predictions[0] # [args.num_cands]
 
-    rank = predictions.argsort().argsort()[0] # rank of the ground truth item
+    if len(args.expert_paths.split(',')) > 1:
+      rank = predictions.argsort()[item_idx[0] - 1] + 1
+    else:
+      rank = predictions.argsort().argsort()[0] # rank of the ground truth item
 
     valid_user += 1
 
