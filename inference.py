@@ -76,7 +76,12 @@ if __name__ == "__main__":
   config.allow_soft_placement = True
 
   model = Model(usernum, itemnum, args)
-  saver = tf.train.Saver(max_to_keep=5)
+  graph_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)
+  load_vars = []
+  for var in graph_vars:
+    if "global_step" in var.name: continue
+    else: load_vars.append(var)
+  saver = tf.train.Saver(var_list=load_vars, max_to_keep=5)
   global_step = tf.train.get_or_create_global_step()
 
   with tf.Session(config=config) as sess:
